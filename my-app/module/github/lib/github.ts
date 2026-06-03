@@ -18,15 +18,15 @@ export const getGithubToken = async () => {
   const account = await prisma.account.findFirst({
     where: {
       userId: session.user.id,
-      providerId: "github",  
+      providerId: "github",
     },
   });
-    
-    if (!account?.accessToken) {
-        throw new Error("NO github access token found");
-    }
 
-    return account.accessToken
+  if (!account?.accessToken) {
+    throw new Error("NO github access token found");
+  }
+
+  return account.accessToken
 };
 
 export async function fetchUserContribution(
@@ -53,30 +53,31 @@ export async function fetchUserContribution(
       }
     }
   `;
-    interface ContributionData {
-  user: {
-    contributionsCollection: {
-      contributionCalendar: {
-        totalContributions: number;
-        weeks: {
-          contributionDays: {
-            contributionCount: number;
-            date: string | Date;
-            color: string;
+  interface ContributionData {
+    user: {
+      contributionsCollection: {
+        contributionCalendar: {
+          totalContributions: number;
+          weeks: {
+            contributionDays: {
+              contributionCount: number;
+              date: string | Date;
+              color: string;
+            }[];
           }[];
-        }[];
+        };
       };
     };
-  };
-}
-    
-    try {
-        const response:ContributionData= await octokit.graphql(query, {
-            username
-        })
-        return response.user.contributionsCollection.contributionCalendar
-    } catch (error) {
-        
-    }
+  }
+
+  try {
+    const response: ContributionData = await octokit.graphql(query, {
+      username
+    })
+    return response.user.contributionsCollection.contributionCalendar
+  } catch (error) {
+    console.error(error);
+    throw error;
+  }
 }
 
