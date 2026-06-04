@@ -33,6 +33,7 @@ import {
     getMonthlyActivity,
 } from "@/module/dashboard/action";
 import ContributionGraph from "@/module/dashboard/components/contribution-graph";
+import { Spinner } from "@/components/ui/spinner";
 
 const MainPage = () => {
     const {
