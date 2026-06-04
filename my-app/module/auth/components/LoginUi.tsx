@@ -4,7 +4,7 @@ import { signIn } from "@/lib/auth-client"
 
 export default function LoginUi() {
    const [isLoading, setIsLoading] = useState(false)
-
+   console.log(process.env.BETTER_AUTH_URL);
    const handleGithubLogin = async () => {
       setIsLoading(true)
       try {
