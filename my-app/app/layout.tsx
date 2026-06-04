@@ -4,7 +4,8 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import "./globals.css";
 import { ThemeProvider } from "@/components/provider/theme-provider";
 import { QueryProvider } from "@/components/provider/query-provider";
-import { requireAuth } from "@/module/auth/utils/auth-utils";
+import { Toaster } from "sonner";
+// import { requireAuth } from "@/module/auth/utils/auth-utils";
 
 
 const geistSans = Geist({
@@ -27,7 +28,7 @@ export default async function RootLayout({
 }: Readonly<{
   children: React.ReactNode;
 }>) {
-  await requireAuth();
+  // await requireAuth();
   return (
     <html
       suppressHydrationWarning
@@ -44,6 +45,7 @@ export default async function RootLayout({
               disableTransitionOnChange
             >
               {children}
+              <Toaster />
             </ThemeProvider>
           </QueryProvider>
         </TooltipProvider>
