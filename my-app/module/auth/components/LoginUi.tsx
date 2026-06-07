@@ -4,7 +4,6 @@ import { signIn } from "@/lib/auth-client"
 
 export default function LoginUi() {
    const [isLoading, setIsLoading] = useState(false)
-   console.log(process.env.BETTER_AUTH_URL);
    const handleGithubLogin = async () => {
       setIsLoading(true)
       try {
@@ -20,21 +19,24 @@ export default function LoginUi() {
       <div className="min-h-screen bg-linear-to-br from-black via-black to-zinc-900 text-white dark flex">
 
          {/* Left Section - Hero Content */}
-         <div className="flex-1 flex flex-col justify-center px-12 py-16">
+         <div className="flex-1 flex flex-col justify-center px-12 py-8">
             <div className="max-w-lg">
 
                {/* Logo */}
-               <div className="mb-16">
+               <div className="mb-5">
                   <div className="inline-flex items-center gap-2 text-2xl font-bold">
-                     <div className="w-8 h-8 bg-primary rounded-full" />
-                     <span>CodeRabbit</span>
+                     <div className="w-8 h-8 bg-primary rounded-full" >
+
+                        <img src="/Hawk.png" />
+
+                     </div>
+                     <span>CodeHawk</span>
                   </div>
                </div>
 
                {/* Main Content */}
                <h1 className="text-5xl font-bold mb-6 leading-tight text-balance">
-                  AI-powered code reviews for modern teams
-               </h1>
+                  AI-powered GitHub pull request reviews for modern development teams               </h1>
                <p className="text-zinc-400 text-lg mb-10 leading-relaxed">
                   Improve code quality, catch bugs early, and ship faster with
                   intelligent, automated code review that understands your codebase.
@@ -44,7 +46,7 @@ export default function LoginUi() {
                <ul className="space-y-3 text-sm text-zinc-400">
                   {[
                      "Line-by-line AI code review",
-                     "Integrates with GitHub, GitLab & Bitbucket",
+                     "Integrates with GitHub",
                      "Customizable review rules & tone",
                   ].map((feature) => (
                      <li key={feature} className="flex items-center gap-2">
@@ -71,7 +73,8 @@ export default function LoginUi() {
                {/* Heading */}
                <div className="mb-12">
                   <h2 className="text-3xl font-bold mb-2">Welcome Back</h2>
-                  <p className="text-zinc-400">Login using one of the following providers:</p>
+                  <p className="text-zinc-400"> CodeHawk connects to your GitHub repositories to review pull requests.
+                     GitHub login is required.</p>
                </div>
 
                {/* GitHub Login Button */}
@@ -81,23 +84,11 @@ export default function LoginUi() {
                   className="w-full py-3 px-4 bg-white text-black rounded-lg font-semibold hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-3 mb-8"
                >
                   <GithubIcon size={20} />
-                  {isLoading ? "Signing in..." : "GitHub"}
+                  {isLoading ? "connecting..." : "Connect with Github"}
                </button>
 
                {/* Footer Links */}
-               <div className="space-y-4 text-center text-sm text-zinc-400">
-                  <div>
-                     New to CodeRabbit?{" "}
-                     <a href="#" className="text-primary hover:text-primary/80 font-semibold">
-                        Sign Up
-                     </a>
-                  </div>
-                  <div>
-                     <a href="#" className="text-primary hover:text-primary/80 font-semibold">
-                        Self-Hosted Services
-                     </a>
-                  </div>
-               </div>
+
 
                {/* Bottom Links */}
                <div className="mt-12 pt-8 border-t border-zinc-700 flex justify-center gap-4 text-xs text-zinc-500">
