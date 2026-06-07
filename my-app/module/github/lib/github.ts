@@ -109,6 +109,12 @@ export const createWebhook = async (owner: string, repo: string) => {
 
   const webhookUrl = `${process.env.NEXT_PUBLIC_APP_BASE_URL}/api/webhooks/github`;
 
+  console.log(
+    "NEXT_PUBLIC_APP_BASE_URL =",
+    process.env.NEXT_PUBLIC_APP_BASE_URL
+  );
+
+  console.log("Webhook URL =", webhookUrl);
 
   const { data: hooks } = await octokit.rest.repos.listWebhooks({
     owner,
