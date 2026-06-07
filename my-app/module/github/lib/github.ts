@@ -301,7 +301,7 @@ export async function postReviewComment(
     owner,
     repo,
     issue_number: prNumber,
-    body: `# 🤖 AI Code Review\n\n${review}\n\n---\n*Powered by CodeHorse*`,
+    body: `# 🤖 AI Code Review\n\n${review}\n\n---\n*Powered by CodeHawk*`,
   });
 }
 
