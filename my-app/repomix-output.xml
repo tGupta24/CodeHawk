@@ -44,9 +44,12 @@ The content is organized as follows:
 AGENTS.md
 app/(auth)/login/page.tsx
 app/api/auth/[...all]/route.ts
+app/api/inngest/route.ts
+app/api/webhooks/github/route.ts
 app/dashboard/layout.tsx
 app/dashboard/page.tsx
 app/dashboard/repository/page.tsx
+app/dashboard/settings/page.tsx
 app/favicon.ico
 app/globals.css
 app/layout.tsx
@@ -113,10 +116,14 @@ components/ui/toggle.tsx
 components/ui/tooltip.tsx
 eslint.config.mjs
 hooks/use-mobile.ts
+inngest/client.ts
+inngest/functions/index.ts
 lib/auth-client.ts
 lib/auth.ts
 lib/db.ts
+lib/pinecone.ts
 lib/utils.ts
+module/ai/lib/rag.ts
 module/auth/components/LoginUi.tsx
 module/auth/components/LogOut.tsx
 module/auth/utils/auth-utils.ts
@@ -125,7 +132,11 @@ module/dashboard/components/contribution-graph.tsx
 module/github/lib/github.ts
 module/repository/actions/index.ts
 module/repository/components/repository-skeleton.tsx
-module/repository/hooks/use.repositories.ts
+module/repository/hooks/use-connect-repository.ts
+module/repository/hooks/use-repositories.ts
+module/settings/actions/index.ts
+module/settings/components/profile-form.tsx
+module/settings/components/repository-list.tsx
 next.config.ts
 package.json
 postcss.config.mjs
@@ -222,6 +233,53 @@ import { auth } from "@/lib/auth"; // path to your auth file
 import { toNextJsHandler } from "better-auth/next-js";
 
 export const { POST, GET } = toNextJsHandler(auth);
+</file>
+
+<file path="app/api/inngest/route.ts">
+import { serve } from "inngest/next";
+import { inngest } from "@/inngest/client";
+import { indexRepo } from "@/inngest/functions";
+
+export const { GET, POST, PUT } = serve({
+    client: inngest,
+    functions: [
+        indexRepo
+    ],
+});
+</file>
+
+<file path="app/api/webhooks/github/route.ts">
+import { NextResponse, NextRequest } from "next/server";
+
+export async function POST(req: NextRequest) {
+    try {
+        const body = await req.json();
+        const event = req.headers.get("x-github-event");
+
+        console.log("recieved Event by Github::", `${event}`)
+        if (event === "ping") {
+            return NextResponse.json(
+                { message: "Pong" },
+                { status: 200 }
+            );
+        }
+
+
+        // TODO: HANDLE LATER
+
+        return NextResponse.json(
+            { message: "Event Processes" },
+            { status: 200 }
+        );
+    } catch (error) {
+        console.error("Error processing webhook:", error);
+
+        return NextResponse.json(
+            { error: "Internal Server Error" },
+            { status: 500 }
+        );
+    }
+}
 </file>
 
 <file path="app/dashboard/layout.tsx">
@@ -517,8 +575,9 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ExternalLink, Search, Star } from "lucide-react";
 
-import { useRepositories } from "@/module/repository/hooks/use.repositories";
+import { useRepositories } from "@/module/repository/hooks/use-repositories";
 import { RepositoryListSkeleton } from "@/module/repository/components/repository-skeleton";
+import { useConnectRepository } from "@/module/repository/hooks/use-connect-repository";
 
 interface Repository {
     id: number;
@@ -541,6 +600,8 @@ const RepositoryPage = () => {
         hasNextPage,
         isFetchingNextPage,
     } = useRepositories();
+
+    const { mutate: connectRepo } = useConnectRepository();
 
     const [searchQuery, setSearchQuery] = useState("");
     const [localConnectingId, setLocalConnectingId] = useState<number | null>(
@@ -587,19 +648,19 @@ const RepositoryPage = () => {
             repo.full_name.toLowerCase().includes(searchQuery.toLowerCase())
     );
 
-    const handleConnect = async (repo: Repository) => {
-        try {
-            setLocalConnectingId(repo.id);
+    const handleConnect = (repo: Repository) => {
+        setLocalConnectingId(repo.id);
 
-            // TODO: Replace with actual connect repository action
-            console.log("Connecting repository:", repo);
-
-            await new Promise((resolve) => setTimeout(resolve, 1000));
-        } catch (error) {
-            console.error(error);
-        } finally {
-            setLocalConnectingId(null);
-        }
+        connectRepo(
+            {
+                owner: repo.full_name.split("/")[0],
+                repo: repo.name,
+                githubId: repo.id,
+            },
+            {
+                onSettled: () => setLocalConnectingId(null),
+            }
+        );
     };
 
     if (isLoading) {
@@ -763,6 +824,35 @@ const RepositoryPage = () => {
 };
 
 export default RepositoryPage;
+</file>
+
+<file path="app/dashboard/settings/page.tsx">
+"use client";
+
+import { ProfileForm } from "@/module/settings/components/profile-form";
+import { RepositoryList } from "@/module/settings/components/repository-list";
+import React from "react";
+
+const SettingPage = () => {
+    return (
+        <div className="space-y-6">
+            <div>
+                <h1 className="text-3xl font-bold tracking-tight">
+                    Settings
+                </h1>
+
+                <p className="text-muted-foreground">
+                    Manage your account settings and connected repositories
+                </p>
+            </div>
+            <ProfileForm />
+            <RepositoryList />
+
+        </div>
+    );
+};
+
+export default SettingPage;
 </file>
 
 <file path="app/globals.css">
@@ -948,7 +1038,8 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import "./globals.css";
 import { ThemeProvider } from "@/components/provider/theme-provider";
 import { QueryProvider } from "@/components/provider/query-provider";
-import { requireAuth } from "@/module/auth/utils/auth-utils";
+import { Toaster } from "sonner";
+// import { requireAuth } from "@/module/auth/utils/auth-utils";
 
 
 const geistSans = Geist({
@@ -971,7 +1062,7 @@ export default async function RootLayout({
 }: Readonly<{
   children: React.ReactNode;
 }>) {
-  await requireAuth();
+  // await requireAuth();
   return (
     <html
       suppressHydrationWarning
@@ -988,6 +1079,7 @@ export default async function RootLayout({
               disableTransitionOnChange
             >
               {children}
+              <Toaster />
             </ThemeProvider>
           </QueryProvider>
         </TooltipProvider>
@@ -8143,6 +8235,49 @@ export function useIsMobile() {
 }
 </file>
 
+<file path="inngest/client.ts">
+// src/inngest/client.ts
+import { Inngest } from "inngest";
+
+export const inngest = new Inngest({ id: "CodeHawk" });
+</file>
+
+<file path="inngest/functions/index.ts">
+// src/inngest/functions.ts
+
+import prisma from "@/lib/db";
+import { inngest } from "../client";
+import { getRepoFileContents } from "@/module/github/lib/github";
+import { indexCodebase } from "@/module/ai/lib/rag";
+export const indexRepo = inngest.createFunction(
+    { id: "index-repo", triggers: { event: "repository.connected" } },
+    async ({ event, step }) => {
+        const { owner, repo, userId } = event.data
+
+        // files
+        const files = await step.run("fetch-files", async () => {
+            const account = await prisma.account.findFirst({
+                where: {
+                    userId: userId,
+                    providerId: "github",
+                },
+            });
+
+            if (!account?.accessToken) {
+                throw new Error("No GitHub access token found");
+            }
+
+            return await getRepoFileContents(account.accessToken, owner, repo)
+        });
+        await step.run("index-codebase", async () => {
+            await indexCodebase(`${owner}/${repo}`, files);
+        })
+
+        return { success: true, indexedFiles: files.length }
+    }
+);
+</file>
+
 <file path="lib/auth-client.ts">
 import { createAuthClient } from "better-auth/react"
 console.log(process.env.BETTER_AUTH_URL);
@@ -8197,12 +8332,107 @@ if (process.env.NODE_ENV !== "production") {
 export default prisma
 </file>
 
+<file path="lib/pinecone.ts">
+import { Pinecone } from "@pinecone-database/pinecone"
+
+export const pinecone = new Pinecone({
+    apiKey: process.env.PINECONE_DB_API_KEY!
+})
+
+
+export const pineconeIndex = pinecone.index("codehawk-ve")
+</file>
+
 <file path="lib/utils.ts">
 import { clsx, type ClassValue } from "clsx"
 import { twMerge } from "tailwind-merge"
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs))
+}
+</file>
+
+<file path="module/ai/lib/rag.ts">
+import { pineconeIndex } from "@/lib/pinecone";
+
+import { embed } from "ai"
+import { google } from "@ai-sdk/google";
+
+export async function generateEmbedding(text: string) {
+    const { embedding } = await embed({
+        model: google.textEmbeddingModel("text-embedding-001"),
+        value: text,
+    });
+
+    return embedding;
+}
+
+export async function indexCodebase(
+    repoId: string,
+    files: { path: string; content: string }[]
+) {
+    const vectors = [];
+
+    for (const file of files) {
+        const content = `File: ${file.path}\n\n${file.content}`;
+        const truncatedContent = content.slice(0, 8000);
+
+        try {
+            const embedding = await generateEmbedding(truncatedContent);
+
+            vectors.push({
+                id: `${repoId}-${file.path.replace(/\//g, "-")}`,
+                values: embedding,
+                metadata: {
+                    repoId,
+                    path: file.path,
+                    content: truncatedContent,
+                },
+            });
+        } catch (error) {
+            console.error(`Failed to embed ${file.path}:`, error);
+        }
+    }
+    if (vectors.length > 0) {
+        const batchSize = 100;
+
+        for (let i = 0; i < vectors.length; i += batchSize) {
+            const batch = vectors.slice(i, i + batchSize);
+
+            await pineconeIndex.upsert({
+                records: batch,
+            });
+        }
+    }
+
+    console.log("Indexing complete");
+}
+
+
+
+
+export async function retrieveContext(
+    query: string,
+    repoId: string,
+    topK: number = 5
+) {
+    const embedding = await generateEmbedding(query);
+
+    const results = await pineconeIndex.query({
+        vector: embedding,
+        filter: {
+            repoId: { $eq: repoId },
+        },
+        topK,
+        includeMetadata: true,
+    });
+
+    return results.matches
+        .map(
+            (match) =>
+                (match.metadata as { content: string } | undefined)?.content
+        )
+        .filter(Boolean);
 }
 </file>
 
@@ -8799,14 +9029,165 @@ export const getRepositories = async (
 
   return data;
 };
+
+
+
+export const createWebhook = async (owner: string, repo: string) => {
+  const token = await getGithubToken();
+
+  const octokit = new Octokit({ auth: token });
+
+  const webhookUrl = `${process.env.NEXT_PUBLIC_APP_BASE_URL}/api/webhooks/github`;
+
+
+  const { data: hooks } = await octokit.rest.repos.listWebhooks({
+    owner,
+    repo,
+  });
+
+  const existingHook = hooks.find(
+    (hook) => hook.config.url === webhookUrl
+  );
+
+  if (existingHook) {
+    return existingHook;
+  }
+
+  const { data } = await octokit.rest.repos.createWebhook({
+    owner,
+    repo,
+    config: {
+      url: webhookUrl,
+      content_type: "json"
+    },
+    events: ["pull_request"]
+
+  })
+  return data
+
+};
+
+
+export const deleteWebhook = async (
+  owner: string,
+  repo: string
+) => {
+  const token = await getGithubToken();
+
+  const octokit = new Octokit({
+    auth: token,
+  });
+
+  const webhookUrl = `${process.env.NEXT_PUBLIC_APP_BASE_URL}/api/webhooks/github`;
+
+  try {
+    const { data: hooks } =
+      await octokit.rest.repos.listWebhooks({
+        owner,
+        repo,
+      });
+
+    const hookToDelete = hooks.find(
+      (hook) => hook.config.url === webhookUrl
+    );
+
+    if (hookToDelete) {
+      await octokit.rest.repos.deleteWebhook({
+        owner,
+        repo,
+        hook_id: hookToDelete.id,
+      });
+    }
+
+    return {
+      success: true,
+    };
+  } catch (error) {
+    console.error(
+      "Error deleting webhook:",
+      error
+    );
+
+    throw error;
+  }
+};
+
+
+
+
+export async function getRepoFileContents(
+  token: string,
+  owner: string,
+  repo: string,
+  path: string = ""
+): Promise<{ path: string; content: string }[]> {
+  const octokit = new Octokit({ auth: token });
+
+  const { data } = await octokit.rest.repos.getContent({
+    owner,
+    repo,
+    path,
+  });
+
+  if (!Array.isArray(data)) {
+    // It's a file
+    if (data.type === "file" && data.content) {
+      return [
+        {
+          path: data.path,
+          content: Buffer.from(data.content, "base64").toString("utf-8"),
+        },
+      ];
+    }
+
+    return [];
+  }
+  let files: { path: string; content: string }[] = [];
+
+  for (const item of data) {
+    if (item.type === "file") {
+      const { data: fileData } = await octokit.rest.repos.getContent({
+        owner,
+        repo,
+        path: item.path,
+      });
+
+      if (
+        !Array.isArray(fileData) &&
+        fileData.type === "file" &&
+        fileData.content
+      ) {
+        // Ignore images and binary files
+        if (
+          !item.path.match(
+            /\.(png|jpg|jpeg|gif|svg|ico|pdf|zip|tar|gz)$/i
+          )
+        ) {
+          files.push({
+            path: item.path,
+            content: Buffer.from(fileData.content, "base64").toString("utf-8"),
+          });
+        }
+      }
+    }
+    else if (item.type === "dir") {
+      const subFiles = await getRepoFileContents(token, owner, repo, item.path)
+      files = files.concat(subFiles);
+    }
+  }
+  return files
+
+
+}
 </file>
 
 <file path="module/repository/actions/index.ts">
 "use server"
-import { getRepositories } from "@/module/github/lib/github";
+import { createWebhook, getRepositories } from "@/module/github/lib/github";
 import { auth } from "@/lib/auth";
 import { headers } from "next/headers";
 import prisma from "@/lib/db";
+import { inngest } from "@/inngest/client";
 
 export const fetchRepositories = async (
     page: number = 1,
@@ -8836,6 +9217,60 @@ export const fetchRepositories = async (
         ...repo,
         isConnected: connectedRepoIds.has(BigInt(repo.id))
     }))
+};
+
+export const connectRepository = async (
+    owner: string,
+    repo: string,
+    githubId: number
+) => {
+    const session = await auth.api.getSession({
+        headers: await headers(),
+    });
+
+    if (!session) {
+        throw new Error("Unauthorized");
+    }
+
+    // TODO: CHECK IF USER CAN CONNECT MORE REPOS
+
+    const webhook = await createWebhook(owner, repo);
+
+    if (webhook) {
+        await prisma.repository.upsert({
+            where: {
+                githubId: BigInt(githubId),
+            },
+            update: {},
+            create: {
+                githubId: BigInt(githubId),
+                name: repo,
+                owner,
+                fullName: `${owner}/${repo}`,
+                url: `https://github.com/${owner}/${repo}`,
+                userId: session.user.id,
+            },
+        });
+    }
+
+    // TODO: INCREMENT REPOSITORY COUNT FOR USAGE TRACKING
+
+    // TODO: TRIGGER REPOSITORY INDEXING FOR RAG (FIRE AND FORGET)
+
+    try {
+        await inngest.send({
+            name: "repository.connected",
+            data: {
+                owner,
+                repo,
+                userId: session.user.id
+            }
+        })
+    } catch (error) {
+        console.error("Failed to trigger repo indexing:::", error);
+    }
+
+    return webhook;
 };
 </file>
 
@@ -8881,7 +9316,38 @@ export function RepositoryListSkeleton() {
 }
 </file>
 
-<file path="module/repository/hooks/use.repositories.ts">
+<file path="module/repository/hooks/use-connect-repository.ts">
+"use client";
+
+import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { connectRepository } from "../actions";
+import { toast } from "sonner";
+
+export const useConnectRepository = () => {
+    const queryClient = useQueryClient();
+
+    return useMutation({
+        mutationFn: async ({ owner, repo, githubId }: { owner: string; repo: string; githubId: number }) => {
+            return await connectRepository(owner, repo, githubId);
+        },
+
+        onSuccess: () => {
+            toast.success("Repository connected successfully");
+
+            queryClient.invalidateQueries({
+                queryKey: ["repositories"],
+            });
+        },
+
+        onError: (error) => {
+            toast.error("Failed to connect repository");
+            console.error(error);
+        },
+    });
+};
+</file>
+
+<file path="module/repository/hooks/use-repositories.ts">
 "use client";
 
 import { useInfiniteQuery } from "@tanstack/react-query";
@@ -8906,13 +9372,710 @@ export const useRepositories = () => {
 };
 </file>
 
+<file path="module/settings/actions/index.ts">
+"use server";
+
+import { auth } from "@/lib/auth";
+import { headers } from "next/headers";
+import prisma from "@/lib/db";
+import { revalidatePath } from "next/cache";
+import { deleteWebhook } from "@/module/github/lib/github";
+
+export async function getUserProfile() {
+    try {
+        const session = await auth.api.getSession({
+            headers: await headers(),
+        });
+
+        if (!session?.user) {
+            throw new Error("Unauthorized");
+        }
+
+        const user = await prisma.user.findUnique({
+            where: {
+                id: session.user.id,
+            },
+            select: {
+                id: true,
+                name: true,
+                email: true,
+                image: true,
+                createdAt: true,
+            },
+        });
+
+        return user;
+    } catch (error) {
+        console.error("Error fetching profile::", error);
+        throw error;
+    }
+}
+
+export async function updateUserProfile(data: {
+    name?: string;
+    email?: string;
+}) {
+    try {
+        const session = await auth.api.getSession({
+            headers: await headers(),
+        });
+
+        if (!session?.user) {
+            throw new Error("Unauthorized");
+        }
+
+        const updatedUser = await prisma.user.update({
+            where: {
+                id: session.user.id,
+            },
+            data: {
+                name: data.name,
+                email: data.email,
+            },
+            select: {
+                id: true,
+                name: true,
+                email: true
+            }
+        });
+        revalidatePath("/dashboard,settings", "page");
+        return {
+            success: true,
+            user: updatedUser
+        }
+    } catch (error) {
+        console.error("Error updateing user profile::", error);
+        return { success: false, error: "Failed to update profile" }
+    }
+}
+
+export const getConnectedRepositories = async () => {
+    try {
+        const session = await auth.api.getSession({
+            headers: await headers(),
+        });
+
+        if (!session?.user) {
+            throw new Error("Unauthorized");
+        }
+
+        const repositories = await prisma.repository.findMany({
+            where: {
+                userId: session.user.id,
+            },
+            select: {
+                id: true,
+                name: true,
+                fullName: true,
+                url: true,
+                createdAt: true,
+            },
+            orderBy: {
+                createdAt: "desc",
+            },
+        });
+        return repositories;
+    } catch (error) {
+        console.error("Error fetching repositories:", error);
+        throw error;
+    }
+};
+
+export const disconnectRepository = async (
+    repositoryId: string
+) => {
+    try {
+        const session = await auth.api.getSession({
+            headers: await headers(),
+        });
+
+        if (!session?.user) {
+            throw new Error("Unauthorized");
+        }
+
+        const repository = await prisma.repository.findUnique({
+            where: {
+                id: repositoryId,
+                userId: session.user.id,
+            },
+        });
+
+        if (!repository) {
+            throw new Error("Repository not found");
+        }
+
+
+        await deleteWebhook(repository.owner, repository.name);
+
+        await prisma.repository.delete({
+            where: {
+                id: repositoryId,
+            },
+        });
+
+        revalidatePath("/dashboard/settings", "page");
+        revalidatePath("/dashboard/repository", "page");
+
+        return {
+            success: true,
+        };
+    } catch (error) {
+        console.error(
+            "Error disconnecting repository:",
+            error
+        );
+
+        return {
+            success: false,
+            error: "Failed to disconnect repository",
+        };
+    }
+};
+
+export const disconnectAllRepositories = async () => {
+    try {
+        const session = await auth.api.getSession({
+            headers: await headers(),
+        });
+
+        if (!session?.user) {
+            throw new Error("Unauthorized");
+        }
+
+        const repositories = await prisma.repository.findMany({
+            where: {
+                userId: session.user.id,
+            },
+        });
+
+        await Promise.all(
+            repositories.map(async (repository) => {
+
+                try {
+                    await deleteWebhook(repository.owner, repository.name);
+                } catch (error) {
+                    console.error(
+                        `Failed to delete webhook for ${repository.fullName}`,
+                        error
+                    );
+                }
+            })
+        );
+
+        await prisma.repository.deleteMany({
+            where: {
+                userId: session.user.id,
+            },
+        });
+
+        revalidatePath("/dashboard/settings");
+        revalidatePath("/dashboard/repository");
+        return {
+            success: true,
+            count: repositories.length,
+        };
+    } catch (error) {
+        console.error("Error disconnecting repositories:", error);
+
+        return {
+            success: false,
+            error: "Failed to disconnect repositories",
+        };
+    }
+};
+</file>
+
+<file path="module/settings/components/profile-form.tsx">
+"use client";
+"use client";
+
+import { useEffect, useState } from "react";
+import {
+    Card,
+    CardContent,
+    CardDescription,
+    CardHeader,
+    CardTitle,
+} from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+    useMutation,
+    useQuery,
+    useQueryClient,
+} from "@tanstack/react-query";
+import {
+    getUserProfile,
+    updateUserProfile,
+} from "@/module/settings/actions";
+import { toast } from "sonner";
+
+export function ProfileForm() {
+    const queryClient = useQueryClient();
+
+    const [name, setName] = useState("");
+    const [email, setEmail] = useState("");
+
+    const {
+        data: profile,
+        isLoading,
+    } = useQuery({
+        queryKey: ["user-profile"],
+        queryFn: async () => await getUserProfile(),
+        staleTime: 1000 * 60 * 5,
+        refetchOnWindowFocus: false,
+    });
+
+    useEffect(() => {
+        if (profile) {
+            setName(profile.name || "");
+            setEmail(profile.email || "");
+        }
+    }, [profile]);
+
+    const updateMutation = useMutation({
+        mutationFn: async (data: { name: string; email: string }) => {
+            return await updateUserProfile(data);
+        },
+
+        onSuccess: (result) => {
+            if (result?.success) {
+                queryClient.invalidateQueries({
+                    queryKey: ["user-profile"],
+                });
+
+                toast.success("Profile updated successfully");
+            }
+        },
+
+        onError: () => {
+            toast.error("Failed to update profile");
+        },
+    });
+
+    const handleSubmit = (e: React.FormEvent) => {
+        e.preventDefault();
+
+        updateMutation.mutate({
+            name,
+            email,
+        });
+    };
+
+    if (isLoading) {
+        return (
+            <Card>
+                <CardHeader>
+                    <CardTitle>Profile Settings</CardTitle>
+                    <CardDescription>
+                        Update your profile information
+                    </CardDescription>
+                </CardHeader>
+
+                <CardContent>
+                    <div className="animate-pulse space-y-4">
+                        <div className="h-10 bg-muted rounded" />
+                        <div className="h-10 bg-muted rounded" />
+                    </div>
+                </CardContent>
+            </Card>
+        );
+    }
+
+    return (
+        <Card>
+            <CardHeader>
+                <CardTitle>Profile Settings</CardTitle>
+                <CardDescription>
+                    Update your profile information
+                </CardDescription>
+            </CardHeader>
+
+            <CardContent>
+                <form
+                    onSubmit={handleSubmit}
+                    className="space-y-6"
+                >
+                    <div className="space-y-2">
+                        <Label htmlFor="name">
+                            Full Name
+                        </Label>
+
+                        <Input
+                            id="name"
+                            placeholder="John Doe"
+                            value={name}
+                            onChange={(e) =>
+                                setName(e.target.value)
+                            }
+                            disabled={updateMutation.isPending}
+                        />
+                    </div>
+
+                    <div className="space-y-2">
+                        <Label htmlFor="email">
+                            Email
+                        </Label>
+
+                        <Input
+                            id="email"
+                            type="email"
+                            placeholder="john@example.com"
+                            value={email}
+                            onChange={(e) =>
+                                setEmail(e.target.value)
+                            }
+                            disabled={updateMutation.isPending}
+                        />
+                    </div>
+
+                    <Button
+                        type="submit"
+                        disabled={updateMutation.isPending}
+                    >
+                        {updateMutation.isPending
+                            ? "Saving..."
+                            : "Save Changes"}
+                    </Button>
+                </form>
+            </CardContent>
+        </Card>
+    );
+}
+</file>
+
+<file path="module/settings/components/repository-list.tsx">
+"use client";
+
+import { useState } from "react";
+import {
+    Card,
+    CardContent,
+    CardDescription,
+    CardHeader,
+    CardTitle,
+} from "@/components/ui/card";
+
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+
+import {
+    useQuery,
+    useMutation,
+    useQueryClient,
+} from "@tanstack/react-query";
+
+import {
+    getConnectedRepositories,
+    disconnectRepository,
+    disconnectAllRepositories,
+} from "@/module/settings/actions";
+
+import { toast } from "sonner";
+
+import {
+    ExternalLink,
+    Trash2,
+    AlertTriangle,
+} from "lucide-react";
+
+import {
+    AlertDialog,
+    AlertDialogAction,
+    AlertDialogCancel,
+    AlertDialogContent,
+    AlertDialogDescription,
+    AlertDialogFooter,
+    AlertDialogHeader,
+    AlertDialogTitle,
+    AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
+
+export function RepositoryList() {
+    const queryClient = useQueryClient();
+
+    const [disconnectAllOpen, setDisconnectAllOpen] =
+        useState(false);
+
+    const {
+        data: repositories,
+        isLoading,
+    } = useQuery({
+        queryKey: ["connected-repositories"],
+        queryFn: async () =>
+            await getConnectedRepositories(),
+        staleTime: 1000 * 60 * 2,
+        refetchOnWindowFocus: false,
+    });
+
+    const disconnectMutation = useMutation({
+        mutationFn: async (repositoryId: string) => {
+            return await disconnectRepository(repositoryId);
+        },
+
+        onSuccess: (result) => {
+            if (result?.success) {
+                queryClient.invalidateQueries({
+                    queryKey: ["connected-repositories"],
+                });
+
+                queryClient.invalidateQueries({
+                    queryKey: ["dashboard-stats"],
+                });
+
+                toast.success(
+                    "Repository disconnected successfully"
+                );
+            } else {
+                toast.error(
+                    result?.error ||
+                    "Failed to disconnect repository"
+                );
+            }
+        },
+    });
+
+    const disconnectAllMutation = useMutation({
+        mutationFn: async () => {
+            return await disconnectAllRepositories();
+        },
+
+        onSuccess: (result) => {
+            if (result?.success) {
+                queryClient.invalidateQueries({
+                    queryKey: ["connected-repositories"],
+                });
+
+                queryClient.invalidateQueries({
+                    queryKey: ["dashboard-stats"],
+                });
+
+                toast.success(
+                    "All repositories disconnected"
+                );
+
+                setDisconnectAllOpen(false);
+            } else {
+                toast.error(
+                    result?.error ||
+                    "Failed to disconnect repositories"
+                );
+            }
+        },
+    });
+
+    if (isLoading) {
+        return (
+            <Card>
+                <CardHeader>
+                    <CardTitle>
+                        Connected Repositories
+                    </CardTitle>
+                    <CardDescription>
+                        Manage your connected GitHub repositories
+                    </CardDescription>
+                </CardHeader>
+
+                <CardContent>
+                    <div className="animate-pulse space-y-4">
+                        <div className="h-20 bg-muted rounded" />
+                        <div className="h-20 bg-muted rounded" />
+                    </div>
+                </CardContent>
+            </Card>
+        );
+    }
+
+    return (
+        <Card>
+            <CardHeader>
+                <CardTitle>
+                    Connected Repositories
+                </CardTitle>
+                <CardDescription>
+                    Manage your connected GitHub repositories
+                </CardDescription>
+                <div>
+                    {repositories && repositories.length > 0 && (
+                        <AlertDialog
+                            open={disconnectAllOpen}
+                            onOpenChange={setDisconnectAllOpen}
+                        >
+                            <AlertDialogTrigger asChild>
+                                <Button
+                                    variant="destructive"
+                                    disabled={
+                                        !repositories?.length ||
+                                        disconnectAllMutation.isPending
+                                    }
+                                >
+                                    <Trash2 className="h-4 w-4 mr-2" />
+                                    Disconnect All
+                                </Button>
+                            </AlertDialogTrigger>
+
+                            <AlertDialogContent>
+                                <AlertDialogHeader>
+                                    <AlertDialogTitle className="flex items-center gap-2">
+                                        <AlertTriangle className="h-5 w-5 text-destructive" />
+                                        Disconnect All Repositories?
+                                    </AlertDialogTitle>
+
+                                    <AlertDialogDescription>
+                                        This will disconnect all {repositories.length} repositories
+                                        and delete all associated AI reviews.
+                                        <br />
+                                        This action cannot be undone.
+                                    </AlertDialogDescription>
+                                </AlertDialogHeader>
+
+                                <AlertDialogFooter>
+                                    <AlertDialogCancel>
+                                        Cancel
+                                    </AlertDialogCancel>
+
+                                    <AlertDialogAction
+                                        onClick={() =>
+                                            disconnectAllMutation.mutate()
+                                        }
+                                        className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                                        disabled={disconnectAllMutation.isPending}
+                                    >
+                                        {disconnectAllMutation.isPending
+                                            ? "Disconnecting..."
+                                            : "Disconnect All"}
+                                    </AlertDialogAction>
+                                </AlertDialogFooter>
+                            </AlertDialogContent>
+                        </AlertDialog>
+                    )}
+                </div>
+            </CardHeader>
+
+            <CardContent>
+                {!repositories?.length ? (
+                    <div className="text-center py-8">
+                        <p className="text-muted-foreground">
+                            No repositories connected yet.
+                        </p>
+                    </div>
+                ) : (
+                    <div className="space-y-4">
+                        {repositories.map((repo) => (
+                            <div
+                                key={repo.id}
+                                className="flex items-center justify-between rounded-lg border p-4"
+                            >
+                                <div className="space-y-1">
+                                    <div className="flex items-center gap-2">
+                                        <h4 className="font-medium">
+                                            {repo.name}
+                                        </h4>
+
+                                        <Badge variant="secondary">
+                                            Connected
+                                        </Badge>
+                                    </div>
+
+                                    <p className="text-sm text-muted-foreground">
+                                        {repo.fullName}
+                                    </p>
+
+                                    <p className="text-xs text-muted-foreground">
+                                        Connected on{" "}
+                                        {new Date(
+                                            repo.createdAt
+                                        ).toLocaleDateString()}
+                                    </p>
+                                </div>
+
+                                <div className="flex items-center gap-2">
+                                    <Button
+                                        variant="ghost"
+                                        size="sm"
+                                        asChild
+                                    >
+                                        <a
+                                            href={repo.url}
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                        >
+                                            <ExternalLink className="h-4 w-4" />
+                                        </a>
+                                    </Button>
+
+                                    <AlertDialog>
+                                        <AlertDialogTrigger asChild>
+                                            <Button
+                                                variant="ghost"
+                                                size="sm"
+                                                className="ml-4 text-destructive hover:text-destructive hover:bg-destructive/10"
+                                            >
+                                                <Trash2 className="h-4 w-4" />
+                                            </Button>
+                                        </AlertDialogTrigger>
+
+                                        <AlertDialogContent>
+                                            <AlertDialogHeader>
+                                                <AlertDialogTitle>
+                                                    Disconnect Repository?
+                                                </AlertDialogTitle>
+
+                                                <AlertDialogDescription>
+                                                    This will disconnect{" "}
+                                                    <strong>{repo.fullName}</strong>{" "}
+                                                    and delete all associated AI
+                                                    reviews.
+                                                    <br />
+                                                    This action cannot be undone.
+                                                </AlertDialogDescription>
+                                            </AlertDialogHeader>
+
+                                            <AlertDialogFooter>
+                                                <AlertDialogCancel>
+                                                    Cancel
+                                                </AlertDialogCancel>
+
+                                                <AlertDialogAction
+                                                    onClick={() =>
+                                                        disconnectMutation.mutate(
+                                                            repo.id
+                                                        )
+                                                    }
+                                                    className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                                                    disabled={
+                                                        disconnectMutation.isPending
+                                                    }
+                                                >
+                                                    {disconnectMutation.isPending
+                                                        ? "Disconnecting..."
+                                                        : "Disconnect"}
+                                                </AlertDialogAction>
+                                            </AlertDialogFooter>
+                                        </AlertDialogContent>
+                                    </AlertDialog>
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                )}
+            </CardContent>
+
+
+        </Card>
+    );
+}
+</file>
+
 <file path="next.config.ts">
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   allowedDevOrigins: [
-    "https://glitch-algebra-judicial.ngrok-free.dev",
+    "glitch-algebra-judicial.ngrok-free.dev",
   ],
+  cacheComponents: true
 };
 
 export default nextConfig;
@@ -8930,10 +10093,13 @@ export default nextConfig;
     "lint": "eslint"
   },
   "dependencies": {
+    "@ai-sdk/google": "^3.0.80",
     "@base-ui/react": "^1.5.0",
+    "@pinecone-database/pinecone": "^7.2.0",
     "@prisma/adapter-pg": "^7.8.0",
     "@prisma/client": "^7.8.0",
     "@tanstack/react-query": "^5.101.0",
+    "ai": "^6.0.197",
     "better-auth": "^1.6.14",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
@@ -8941,6 +10107,7 @@ export default nextConfig;
     "date-fns": "^4.4.0",
     "dotenv": "^17.4.2",
     "embla-carousel-react": "^8.6.0",
+    "inngest": "^4.5.0",
     "input-otp": "^1.4.2",
     "kysely": "0.27.4",
     "lucide-react": "^1.17.0",
@@ -8970,6 +10137,7 @@ export default nextConfig;
     "@types/react-dom": "^19",
     "eslint": "^9",
     "eslint-config-next": "16.2.7",
+    "inngest-cli": "^1.25.0",
     "prisma": "^7.8.0",
     "tailwindcss": "^4",
     "tsx": "^4.22.4",
