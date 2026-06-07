@@ -49,6 +49,7 @@ app/api/webhooks/github/route.ts
 app/dashboard/layout.tsx
 app/dashboard/page.tsx
 app/dashboard/repository/page.tsx
+app/dashboard/reviews/page.tsx
 app/dashboard/settings/page.tsx
 app/favicon.ico
 app/globals.css
@@ -118,11 +119,14 @@ eslint.config.mjs
 hooks/use-mobile.ts
 inngest/client.ts
 inngest/functions/index.ts
+inngest/functions/review.ts
+inngest/functions/tempCodeRunnerFile.ts
 lib/auth-client.ts
 lib/auth.ts
 lib/db.ts
 lib/pinecone.ts
 lib/utils.ts
+module/ai/actions/index.ts
 module/ai/lib/rag.ts
 module/auth/components/LoginUi.tsx
 module/auth/components/LogOut.tsx
@@ -134,6 +138,7 @@ module/repository/actions/index.ts
 module/repository/components/repository-skeleton.tsx
 module/repository/hooks/use-connect-repository.ts
 module/repository/hooks/use-repositories.ts
+module/review/actions/index.ts
 module/settings/actions/index.ts
 module/settings/components/profile-form.tsx
 module/settings/components/repository-list.tsx
@@ -144,6 +149,7 @@ prisma.config.ts
 prisma/migrations/20260603090253_test/migration.sql
 prisma/migrations/20260603092504_authentication/migration.sql
 prisma/migrations/20260604072415_repository_model_added/migration.sql
+prisma/migrations/20260607073058_added_review/migration.sql
 prisma/migrations/migration_lock.toml
 prisma/schema.prisma
 public/file.svg
@@ -239,16 +245,19 @@ export const { POST, GET } = toNextJsHandler(auth);
 import { serve } from "inngest/next";
 import { inngest } from "@/inngest/client";
 import { indexRepo } from "@/inngest/functions";
+import { generateReview } from "@/inngest/functions/review";
 
 export const { GET, POST, PUT } = serve({
     client: inngest,
     functions: [
-        indexRepo
+        indexRepo,
+        generateReview
     ],
 });
 </file>
 
 <file path="app/api/webhooks/github/route.ts">
+import { reviewPullRequest } from "@/module/ai/actions";
 import { NextResponse, NextRequest } from "next/server";
 
 export async function POST(req: NextRequest) {
@@ -263,7 +272,21 @@ export async function POST(req: NextRequest) {
                 { status: 200 }
             );
         }
+        if (event === "pull_request") {
+            const action = body.action;
+            const repo = body.repository.full_name;
+            const prNumber = body.number;
 
+            const [owner, repoName] = repo.split("/");
+
+            if (action === "opened" || action === "synchronize") {
+                reviewPullRequest(owner, repoName, prNumber)
+                    .then(() => console.log(`Review completed for ${repo} #${prNumber}`))
+                    .catch((error) =>
+                        console.log(`Review failed for ${repo} #${prNumber}:`, error)
+                    );
+            }
+        }
 
         // TODO: HANDLE LATER
 
@@ -824,6 +847,184 @@ const RepositoryPage = () => {
 };
 
 export default RepositoryPage;
+</file>
+
+<file path="app/dashboard/reviews/page.tsx">
+"use client";
+
+import {
+    Card,
+    CardContent,
+    CardDescription,
+    CardHeader,
+    CardTitle,
+} from "@/components/ui/card";
+
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+
+import {
+    ExternalLink,
+    Clock,
+    CheckCircle2,
+    XCircle,
+} from "lucide-react";
+
+import { useQuery } from "@tanstack/react-query";
+import { getReviews } from "@/module/review/actions";
+import { formatDistanceToNow } from "date-fns";
+
+export default function ReviewsPage() {
+    const { data: reviews = [], isLoading, error } = useQuery({
+        queryKey: ["reviews"],
+        queryFn: async () => {
+            return await getReviews();
+        },
+    });
+
+    if (isLoading) {
+        return (
+            <div className="flex items-center justify-center py-20">
+                Loading reviews...
+            </div>
+        );
+    }
+
+    if (error) {
+        return (
+            <div className="flex items-center justify-center py-20 text-red-500">
+                Failed to load reviews
+            </div>
+        );
+    }
+
+    return (
+        <div className="space-y-6">
+            <div>
+                <h1 className="text-3xl font-bold tracking-tight">
+                    Review History
+                </h1>
+                <p className="text-muted-foreground">
+                    View all AI code reviews generated for your repositories.
+                </p>
+            </div>
+
+            {reviews.length === 0 ? (
+                <Card>
+                    <CardContent className="flex flex-col items-center justify-center py-12">
+                        <p className="text-muted-foreground">
+                            No reviews found.
+                        </p>
+                    </CardContent>
+                </Card>
+            ) : (
+                <div className="grid gap-4">
+                    {reviews.map((review: any) => (
+                        <Card
+                            key={review.id}
+                            className="hover:shadow-md transition-shadow"
+                        >
+                            <CardHeader>
+                                <div className="flex items-start justify-between">
+                                    <div className="space-y-2 flex-1">
+                                        <div className="flex items-center gap-2 flex-wrap">
+                                            <CardTitle className="text-lg">
+                                                {review.prTitle}
+                                            </CardTitle>
+
+                                            {review.status === "completed" && (
+                                                <Badge
+                                                    variant="default"
+                                                    className="gap-1"
+                                                >
+                                                    <CheckCircle2 className="h-3 w-3" />
+                                                    Completed
+                                                </Badge>
+                                            )}
+
+                                            {review.status === "failed" && (
+                                                <Badge
+                                                    variant="destructive"
+                                                    className="gap-1"
+                                                >
+                                                    <XCircle className="h-3 w-3" />
+                                                    Failed
+                                                </Badge>
+                                            )}
+
+                                            {review.status === "pending" && (
+                                                <Badge
+                                                    variant="secondary"
+                                                    className="gap-1"
+                                                >
+                                                    <Clock className="h-3 w-3" />
+                                                    Pending
+                                                </Badge>
+                                            )}
+                                        </div>
+
+                                        <CardDescription>
+                                            {review.repository.fullName} • PR #
+                                            {review.prNumber}
+                                        </CardDescription>
+                                    </div>
+
+                                    <Button
+                                        variant="ghost"
+                                        size="icon"
+                                        asChild
+                                    >
+                                        <a
+                                            href={review.prUrl}
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                        >
+                                            <ExternalLink className="h-4 w-4" />
+                                        </a>
+                                    </Button>
+                                </div>
+                            </CardHeader>
+
+                            <CardContent>
+                                <div className="space-y-4">
+                                    <div className="text-sm text-muted-foreground">
+                                        {formatDistanceToNow(
+                                            new Date(review.createdAt),
+                                            { addSuffix: true }
+                                        )}
+                                    </div>
+
+                                    <div className="prose prose-sm dark:prose-invert max-w-none">
+                                        <div className="bg-muted p-4 rounded-lg">
+                                            <pre className="whitespace-pre-wrap text-xs">
+                                                {review.review.length > 300
+                                                    ? `${review.review.substring(
+                                                        0,
+                                                        300
+                                                    )}...`
+                                                    : review.review}
+                                            </pre>
+                                        </div>
+                                    </div>
+
+                                    <Button variant="outline" asChild>
+                                        <a
+                                            href={review.prUrl}
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                        >
+                                            View Full Review on GitHub
+                                        </a>
+                                    </Button>
+                                </div>
+                            </CardContent>
+                        </Card>
+                    ))}
+                </div>
+            )}
+        </div>
+    );
+}
 </file>
 
 <file path="app/dashboard/settings/page.tsx">
@@ -8278,6 +8479,239 @@ export const indexRepo = inngest.createFunction(
 );
 </file>
 
+<file path="inngest/functions/review.ts">
+import { inngest } from "../client";
+import { getPullRequestDiff, postReviewComment } from "@/module/github/lib/github";
+import { retrieveContext } from "@/module/ai/lib/rag";
+import { generateText } from "ai";
+import { google } from "@ai-sdk/google";
+import prisma from "@/lib/db";
+
+
+
+export const generateReview = inngest.createFunction(
+    {
+        id: "generate-review",
+        triggers: {
+            event: "pr.review.requested",
+        },
+    },
+    async ({ event, step }) => {
+        const { owner, repo, prNumber, userId } = event.data;
+
+        const { diff, title, description, token } = await step.run(
+            "fetch-pr-data",
+            async () => {
+                const account = await prisma.account.findFirst({
+                    where: {
+                        userId,
+                        providerId: "github",
+                    },
+                });
+
+                if (!account?.accessToken) {
+                    throw new Error("No GitHub access token found");
+                }
+
+                const data = await getPullRequestDiff(
+                    account.accessToken,
+                    owner,
+                    repo,
+                    prNumber
+                );
+
+                return {
+                    ...data,
+                    token: account.accessToken,
+                };
+            }
+        );
+
+        const context = await step.run(
+            "retrieve-context",
+            async () => {
+                const query = `${title}\n${description}`;
+
+                return await retrieveContext(
+                    query,
+                    `${owner}/${repo}`
+                );
+            }
+        );
+
+
+        const review = await step.run("generate-ai-review", async () => {
+            const prompt = `You are an expert code reviewer. Analyze the following pull request and provide a detailed, constructive code review.
+
+PR Title: ${title}
+PR Description: ${description || "No description provided"}
+
+Context from Codebase:
+${context.join("\n\n")}
+
+Code Changes:
+
+\`\`\`diff
+${diff}
+\`\`\`
+
+Please provide:
+
+1. **Walkthrough**: A file-by-file explanation of the changes.
+2. **Sequence Diagram**: A Mermaid JS sequence diagram visualizing the flow of the changes (if applicable). Use a \`\`\`mermaid block.
+
+   **IMPORTANT**:
+   - Ensure the Mermaid syntax is valid.
+   - Do not use special characters (like quotes, braces, parentheses) inside Note text or labels as it breaks rendering.
+   - Keep the diagram simple.
+
+3. **Summary**: Brief overview.
+4. **Strengths**: What's done well.
+5. **Issues**: Bugs, security concerns, code smells.
+6. **Suggestions**: Specific code improvements.
+7. **Final Verdict**:
+   - Approve
+   - Approve with Suggestions
+   - Request Changes
+
+   Explain the reasoning behind the verdict.
+
+8. **Poem**: A short, creative poem summarizing the changes at the very end.
+
+Format your response in markdown.
+`;
+
+            const { text } = await generateText({
+                model: google("gemini-2.5-flash"),
+                prompt,
+            });
+
+            return text;
+        });
+
+        await step.run("post-comment", async () => {
+            await postReviewComment(token, owner, repo, prNumber, review)
+        })
+
+        await step.run("save-review", async () => {
+            const repository = await prisma.repository.findFirst({
+                where: {
+                    owner,
+                    name: repo,
+                },
+            });
+
+            if (!repository) {
+                throw new Error("Repository not found");
+            }
+
+            await prisma.review.create({
+                data: {
+                    repositoryId: repository.id,
+                    prNumber,
+                    prTitle: title,
+                    prUrl: `https://github.com/${owner}/${repo}/pull/${prNumber}`,
+                    review,
+                    status: "completed",
+                },
+            });
+        });
+        return { success: true }
+    }
+);
+</file>
+
+<file path="inngest/functions/tempCodeRunnerFile.ts">
+import { inngest } from "../client";
+import { getPullRequestDiff } from "@module/github/lib/github";
+import { retrieveContext } from "@module/ai/lib/rag";
+import { generateText } from "ai";
+import { google } from "@ai-sdk/google";
+import prisma from "@/lib/db";
+
+export const generateReview = inngest.createFunction(
+    { id: "generate-review", concurrency: 5 },
+    { event: "pr.review.requested" },
+
+    async ({ event, step }) => {
+        const { owner, repo, prNumber, userId } = event.data;
+
+        const { diff, title, description, token } = await step.run(
+            "fetch-pr-data",
+            async () => {
+                const account = await prisma.account.findFirst({
+                    where: {
+                        userId: userId,
+                        providerId: "github",
+                    },
+                });
+
+                if (!account?.accessToken) {
+                    throw new Error("No GitHub access token found");
+                }
+
+                const data = await getPullRequestDiff(
+                    account.accessToken,
+                    owner,
+                    repo,
+                    prNumber
+                );
+
+                return {
+                    ...data,
+                    token: account.accessToken,
+                };
+            }
+        );
+
+        const context = await step.run(
+            "retrieve-context",
+            async () => {
+                const query = `${title}\n${description}`;
+
+                return await retrieveContext(
+                    query,
+                    `${owner}/${repo}`
+                );
+            }
+        );
+
+        const review = await step.run(
+            "generate-ai-review",
+            async () => {
+                const prompt = `
+          Review this pull request and provide:
+          1. Summary of changes
+          2. Potential issues or bugs
+          3. Code quality suggestions
+          4. Security concerns
+          5. Performance considerations
+
+          Pull Request Title:
+          ${title}
+
+          Description:
+          ${description}
+
+          Relevant Context:
+          ${context}
+
+          Diff:
+          ${diff}
+        `;
+
+                const { text } = await generateText({
+                    model: google("gemini-2.5-pro"),
+                    prompt,
+                });
+
+                return text;
+            }
+        );
+    }
+);
+</file>
+
 <file path="lib/auth-client.ts">
 import { createAuthClient } from "better-auth/react"
 console.log(process.env.BETTER_AUTH_URL);
@@ -8352,15 +8786,114 @@ export function cn(...inputs: ClassValue[]) {
 }
 </file>
 
+<file path="module/ai/actions/index.ts">
+"use server"
+
+import { inngest } from "@/inngest/client";
+import prisma from "@/lib/db";
+import { getPullRequestDiff } from "@/module/github/lib/github";
+
+export async function reviewPullRequest(
+    owner: string,
+    repo: string,
+    prNumber: number
+) {
+    try {
+        const repository = await prisma.repository.findFirst({
+            where: {
+                owner,
+                name: repo,
+            },
+            include: {
+                user: {
+                    include: {
+                        accounts: {
+                            where: {
+                                providerId: "github",
+                            },
+                        },
+                    },
+                },
+            },
+        });
+
+        if (!repository) {
+            throw new Error(
+                `Repository ${owner}/${repo} not found in database. Please reconnect the repository.`
+            );
+        }
+
+        const githubAccount = repository.user.accounts[0];
+
+        if (!githubAccount?.accessToken) {
+            throw new Error(
+                "No GitHub access token found for repository owner"
+            );
+        }
+
+        const token = githubAccount.accessToken;
+
+        const { title } = await getPullRequestDiff(
+            token,
+            owner,
+            repo,
+            prNumber
+        );
+
+        await inngest.send({
+            name: "pr.review.requested",
+            data: {
+                owner,
+                repo,
+                prNumber,
+                userId: repository.user.id,
+            },
+        });
+
+        return {
+            success: true,
+            message: "Review queued",
+            title,
+        };
+    } catch (error) {
+        try {
+            const repository = await prisma.repository.findFirst({
+                where: {
+                    owner,
+                    name: repo,
+                },
+            });
+
+            if (repository) {
+                await prisma.review.create({
+                    data: {
+                        repositoryId: repository.id,
+                        prNumber,
+                        prTitle: `Failed to fetch PR`,
+                        prUrl: `https://github.com/${owner}/${repo}/pull/${prNumber}`,
+                        review: `Error: ${error instanceof Error ? error.message : "Unknown Error"
+                            }`,
+                        status: "failed",
+                    },
+                });
+            }
+        } catch (dbError) {
+            console.log("Faild to save error to database", dbError)
+
+        }
+    }
+}
+</file>
+
 <file path="module/ai/lib/rag.ts">
 import { pineconeIndex } from "@/lib/pinecone";
-
-import { embed } from "ai"
+import { embed } from "ai";
 import { google } from "@ai-sdk/google";
 
 export async function generateEmbedding(text: string) {
     const { embedding } = await embed({
-        model: google.textEmbeddingModel("text-embedding-001"),
+        model: google.embedding("gemini-embedding-001"),
+
         value: text,
     });
 
@@ -8371,7 +8904,7 @@ export async function indexCodebase(
     repoId: string,
     files: { path: string; content: string }[]
 ) {
-    const vectors = [];
+    const vectors: { id: string; values: number[]; metadata: Record<string, string> }[] = [];
 
     for (const file of files) {
         const content = `File: ${file.path}\n\n${file.content}`;
@@ -8382,7 +8915,7 @@ export async function indexCodebase(
 
             vectors.push({
                 id: `${repoId}-${file.path.replace(/\//g, "-")}`,
-                values: embedding,
+                values: embedding,        // ✅ 'values' not 'embedding'
                 metadata: {
                     repoId,
                     path: file.path,
@@ -8393,23 +8926,18 @@ export async function indexCodebase(
             console.error(`Failed to embed ${file.path}:`, error);
         }
     }
+
     if (vectors.length > 0) {
         const batchSize = 100;
 
         for (let i = 0; i < vectors.length; i += batchSize) {
             const batch = vectors.slice(i, i + batchSize);
-
-            await pineconeIndex.upsert({
-                records: batch,
-            });
+            await pineconeIndex.upsert({ records: batch });  // ✅ correct
         }
     }
 
     console.log("Indexing complete");
 }
-
-
-
 
 export async function retrieveContext(
     query: string,
@@ -9068,6 +9596,7 @@ export const createWebhook = async (owner: string, repo: string) => {
 };
 
 
+
 export const deleteWebhook = async (
   owner: string,
   repo: string
@@ -9178,6 +9707,54 @@ export async function getRepoFileContents(
   return files
 
 
+}
+
+
+export async function getPullRequestDiff(
+  token: string,
+  owner: string,
+  repo: string,
+  prNumber: number
+) {
+  const octokit = new Octokit({ auth: token });
+
+  const { data: pr } = await octokit.rest.pulls.get({
+    owner,
+    repo,
+    pull_number: prNumber
+  })
+
+  const { data: diff } = await octokit.rest.pulls.get({
+    owner,
+    repo,
+    pull_number: prNumber,
+    mediaType: {
+      format: "diff",
+    },
+  });
+
+  return {
+    diff: diff as unknown as string,
+    title: pr.title,
+    description: pr.body || "",
+  };
+}
+
+export async function postReviewComment(
+  token: string,
+  owner: string,
+  repo: string,
+  prNumber: number,
+  review: string
+) {
+  const octokit = new Octokit({ auth: token });
+
+  await octokit.rest.issues.createComment({
+    owner,
+    repo,
+    issue_number: prNumber,
+    body: `# 🤖 AI Code Review\n\n${review}\n\n---\n*Powered by CodeHorse*`,
+  });
 }
 </file>
 
@@ -9370,6 +9947,40 @@ export const useRepositories = () => {
         initialPageParam: 1,
     });
 };
+</file>
+
+<file path="module/review/actions/index.ts">
+"use server"
+import { auth } from "@/lib/auth";
+import prisma from "@/lib/db";
+import { headers } from "next/headers";
+
+export async function getReviews() {
+    const session = await auth.api.getSession({
+        headers: await headers(),
+    });
+
+    if (!session) {
+        throw new Error("Unauthorized");
+    }
+
+    const reviews = await prisma.review.findMany({
+        where: {
+            repository: {
+                userId: session.user.id,
+            },
+        },
+        include: {
+            repository: true,
+        },
+        orderBy: {
+            createdAt: "desc",
+        },
+        take: 50,
+    });
+
+    return reviews;
+}
 </file>
 
 <file path="module/settings/actions/index.ts">
@@ -10169,14 +10780,13 @@ export default config;
 // npm install --save-dev prisma dotenv
 import "dotenv/config";
 import { defineConfig } from "prisma/config";
-
 export default defineConfig({
   schema: "prisma/schema.prisma",
   migrations: {
     path: "prisma/migrations",
   },
   datasource: {
-    url: process.env["DATABASE_URL"],
+    url: process.env.DATABASE_URL,
   },
 });
 </file>
@@ -10298,6 +10908,29 @@ CREATE INDEX "Repository_userId_idx" ON "Repository"("userId");
 ALTER TABLE "Repository" ADD CONSTRAINT "Repository_userId_fkey" FOREIGN KEY ("userId") REFERENCES "user"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 </file>
 
+<file path="prisma/migrations/20260607073058_added_review/migration.sql">
+-- CreateTable
+CREATE TABLE "review" (
+    "id" TEXT NOT NULL,
+    "repositoryId" TEXT NOT NULL,
+    "prNumber" INTEGER NOT NULL,
+    "prTitle" TEXT NOT NULL,
+    "prUrl" TEXT NOT NULL,
+    "review" TEXT NOT NULL,
+    "status" TEXT NOT NULL DEFAULT 'pending',
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "review_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateIndex
+CREATE INDEX "review_repositoryId_idx" ON "review"("repositoryId");
+
+-- AddForeignKey
+ALTER TABLE "review" ADD CONSTRAINT "review_repositoryId_fkey" FOREIGN KEY ("repositoryId") REFERENCES "Repository"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+</file>
+
 <file path="prisma/migrations/migration_lock.toml">
 # Please do not edit this file manually
 # It should be added in your version-control system (e.g., Git)
@@ -10345,11 +10978,30 @@ model Repository {
 
   userId    String
   user      User @relation(fields: [userId], references: [id], onDelete: Cascade)
-
+  reviews   Review[]
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@index([userId])
+}
+
+model Review {
+  id           String      @id @default(cuid())
+  repositoryId String
+  repository   Repository  @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
+  prNumber     Int
+  prTitle      String
+  prUrl        String
+
+  review       String      @db.Text
+
+  status       String      @default("pending") // pending, completed, failed
+
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+
+  @@index([repositoryId])
+  @@map("review")
 }
 
 model Session {
