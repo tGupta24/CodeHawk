@@ -40,6 +40,7 @@ export const connectRepository = async (
     repo: string,
     githubId: number
 ) => {
+    console.log("=== CONNECT REPOSITORY START ===");
     const session = await auth.api.getSession({
         headers: await headers(),
     });
@@ -49,11 +50,14 @@ export const connectRepository = async (
     }
 
     // TODO: CHECK IF USER CAN CONNECT MORE REPOS
-
+    console.log("Before createWebhook");
     const webhook = await createWebhook(owner, repo);
-
+    console.log("Webhook result:", webhook);
     if (webhook) {
+        console.log("Before Prisma upsert");
+
         await prisma.repository.upsert({
+
             where: {
                 githubId: BigInt(githubId),
             },
@@ -67,11 +71,14 @@ export const connectRepository = async (
                 userId: session.user.id,
             },
         });
+        console.log("Prisma upsert success");
+
     }
 
     // TODO: INCREMENT REPOSITORY COUNT FOR USAGE TRACKING
 
     // TODO: TRIGGER REPOSITORY INDEXING FOR RAG (FIRE AND FORGET)
+    console.log("Before Inngest");
 
     try {
         await inngest.send({
@@ -82,9 +89,12 @@ export const connectRepository = async (
                 userId: session.user.id
             }
         })
+        console.log("Inngest success");
+
     } catch (error) {
         console.error("Failed to trigger repo indexing:::", error);
     }
+    console.log("=== CONNECT REPOSITORY END ===");
 
     return webhook;
 };
